@@ -1,0 +1,67 @@
+{
+    "node": {
+        "name": "PLC",
+        "metrics": [
+            {
+                "name": "solar_power",
+                "datatype": "float"
+            },
+            {
+                "name": "load_power",
+                "datatype": "float"
+            },
+            {
+                "name": "inverter_status",
+                "datatype": "bool"
+            },
+            {
+                "name": "inverter_fault_code",
+                "datatype": "uint16"
+            },
+            {
+                "name": "ip_address",
+                "datatype": "string"
+            },
+            {
+                "name": "uptime",
+                "datatype": "uint64"
+            }
+        ]
+    },
+    "devices": [
+        {
+            "name": "solar_panel",
+            "metrics": [
+                {
+                    "name": "voltage",
+                    "datatype": "float"
+                },
+                {
+                    "name": "current",
+                    "datatype": "float"
+                }
+            ]
+        },
+        {
+            "name": "battery",
+            "metrics": [
+                {
+                    "name": "voltage",
+                    "datatype": "float"
+                },
+                {
+                    "name": "current",
+                    "datatype": "float"
+                },
+                {
+                    "name": "temperature",
+                    "datatype": "float"
+                },
+                {
+                    "name": "state_of_charge",
+                    "datatype": "uint16"
+                }
+            ]
+        }
+    ]
+}

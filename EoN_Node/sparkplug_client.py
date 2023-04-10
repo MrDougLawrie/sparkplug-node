@@ -264,7 +264,7 @@ class Client(mqtt.Client):
                     # Update state
                     self.state.set_node_metric(metric.name, new_value)
                 
-
+                    # TODO Do we need to save events to a buffer so that they can be read from .inbound_events()?
             self.publish_changes()
 
 

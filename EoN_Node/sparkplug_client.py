@@ -1,10 +1,12 @@
 import sys
+sys.path.insert(0, "../core/")
 import json
 import paho.mqtt.client as mqtt
 import sparkplug_b as sparkplug
 import sparkplug_b_pb2
 
 class State():
+
     def __init__(self, birth_certificate):
         """
         Creates a new instance of the `State` class with metrics initialized to their default values.
@@ -15,10 +17,12 @@ class State():
         self.node_metrics = {metric_name: self.get_default_value(data_type) 
             for metric_name, data_type in birth_certificate.node_metrics.items()}
         self.devices = {}
-        for device_name, device_metrics in birth_certificate.device_metrics.items():
+        for device_name, device_metrics in birth_certificate.devices.items():
             self.devices[device_name] = {}
             for metric_name, data_type in device_metrics.items():
                 self.devices[device_name][metric_name] = self.get_default_value(data_type)
+        self.old_node_metrics = self.node_metrics.copy()
+        self.old_devices = {device_name: device_metrics.copy() for device_name, device_metrics in self.devices.items()}
 
     def get_default_value(self, data_type: sparkplug.MetricDataType):
         """
@@ -80,18 +84,14 @@ class State():
         """
         node_changes = {}
         device_changes = {}
+        node_changes = [MetricChangeEvent(metric_name, value) for metric_name, value in self.node_metrics.items() if self.old_node_metrics[metric_name] != value]
+        self.old_node_metrics = self.node_metrics.copy()
 
-        for metric_name, value in self.node_metrics.items():
-            if metric_name not in self.previous_metrics or self.previous_metrics[metric_name] != value:
-                node_changes[metric_name] = value
-        self.previous_metrics = self.node_metrics.copy()
-
+        device_changes = []
         for device_name, device_metrics in self.devices.items():
-            device_changes[device_name] = {}
-            for metric_name, value in device_metrics.items():
-                if metric_name not in self.previous_metrics[device_name] or self.previous_metrics[device_name][metric_name] != value:
-                    device_changes[device_name][metric_name] = value
-            self.previous_metrics[device_name] = device_metrics.copy()
+            device_metric_changes = [MetricChangeEvent(metric_name, value) for metric_name, value in device_metrics.items() if self.old_devices[device_name][metric_name] != value]
+            device_changes += DeviceChangeEvent(device_name, device_metric_changes)
+            self.old_devices[device_name] = device_metrics.copy()
 
         return node_changes, device_changes
 
@@ -171,11 +171,21 @@ class BirthCertificate:
         else:
             raise ValueError(f"Invalid datatype: {datatype_str}")
 
+class MetricChangeEvent:
+    def __init__(self, metric_name: str, new_value):
+        self.metric_name = metric_name
+        self.new_value = new_value
+
+class DeviceChangeEvent:
+    def __init__(self, device_id: str, metric_changes: list[MetricChangeEvent]):
+        self.device_id = device_id
+        self.metric_changes = metric_changes
 
 class Client(mqtt.Client):
     def __init__(self, host, port, keep_alive):
         super().__init__()
-        self.state = State()
+        self.state = None
+        self.event_buffer = []
         self.birth_certificate = None
         self.group_id = ''
         self.node_id = ''
@@ -190,7 +200,8 @@ class Client(mqtt.Client):
         # Save birth certificate as a property
         self.birth_certificate = birth_certificate
         
-        # TODO Initialise state
+        # Initialise state
+        self.state = State(self.birth_certificate)
 
     def set_id(self, group_id, node_id):
         # Set the group id and node id for this client
@@ -208,64 +219,74 @@ class Client(mqtt.Client):
         self.connected = True
         self._publish_birth()
 
+    def _handle_ncmd(self, inbound_payload):
+        for metric in inbound_payload.metrics:
+            if metric.name == "Node Control/Next Server":
+                # 'Node Control/Next Server' is an NCMD used to tell the device/client application to
+                # disconnect from the current MQTT server and connect to the next MQTT server in the
+                # list of available servers.  This is used for clients that have a pool of MQTT servers
+                # to connect to.
+                print( "'Node Control/Next Server' is not implemented in this example")
+            elif metric.name == "Node Control/Rebirth":
+                # 'Node Control/Rebirth' is an NCMD used to tell the device/client application to resend
+                # its full NBIRTH and DBIRTH again.  MQTT Engine will send this NCMD to a device/client
+                # application if it receives an NDATA or DDATA with a metric that was not published in the
+                # original NBIRTH or DBIRTH.  This is why the application must send all known metrics in
+                # its original NBIRTH and DBIRTH messages.
+                self._publish_birth()
+            elif metric.name == "Node Control/Reboot":
+
+                self._publish_birth()
+            elif metric.name in self.birth_certificate.node_metrics:
+                # Get value
+                new_value = self.metric_value_from_type(metric, self.birth_certificate.node_metrics[metric.name])
+                        
+                # Update state
+                self.state.set_node_metric(metric.name, new_value)
+
+                # Appnd to metric change event buffer so that user can get new events from .inbound_events()
+                self.event_buffer.append(MetricChangeEvent(metric.name, new_value))
+            else:
+                # Invalid metric
+                print(f"Received NCMD with invalid metric {metric.name}. Ignoring.")
+
+
+    def _handle_dcmd(self, tokens, inbound_payload):
+        device_name = tokens[4]
+        if device_name not in self.state.devices:
+            print(f"Received DCMD with invalid device id {device_name}. Ignoring.")
+            return
+        
+        metric_changes = []
+        for metric in inbound_payload.metrics:
+            if metric not in self.birth_certificate.devices[device_name]:
+                print(f"Received DCMD with invalid metric {metric.name}. Ignoring this metric.")
+            
+            # Get value
+            new_value = self.metric_value_from_type(metric, self.birth_certificate.node_metrics[metric.name])
+
+            # Update state
+            self.state.set_node_metric(metric.name, new_value)
+            
+            # Appnd to metric change event buffer so that user can get new events from .inbound_events()
+            metric_changes.append(MetricChangeEvent(device_name, metric.name, new_value))
+        if metric_changes:
+            self.event_buffer.append(DeviceChangeEvent(device_name, metric_changes))
+
+
     def _on_message(self, userdata, msg):
         print("Message arrived: " + msg.topic)
         tokens = msg.topic.split("/")
 
-        if tokens[0] == "spBv1.0" and tokens[1] == self.group_id and (tokens[2] == "NCMD" or tokens[2] == "DCMD") and tokens[3] == self.node_id:
+        if tokens[0] == "spBv1.0" and tokens[1] == self.group_id and tokens[3] == self.node_id:
             inbound_payload = sparkplug_b_pb2.Payload()
             inbound_payload.ParseFromString(msg.payload)
             if tokens[2] == 'NCMD': 
-                # Node Commands
-                for metric in inbound_payload.metrics:
-                    if metric.name == "Node Control/Next Server":
-                        # 'Node Control/Next Server' is an NCMD used to tell the device/client application to
-                        # disconnect from the current MQTT server and connect to the next MQTT server in the
-                        # list of available servers.  This is used for clients that have a pool of MQTT servers
-                        # to connect to.
-                        print( "'Node Control/Next Server' is not implemented in this example")
-                    elif metric.name == "Node Control/Rebirth":
-                        # 'Node Control/Rebirth' is an NCMD used to tell the device/client application to resend
-                        # its full NBIRTH and DBIRTH again.  MQTT Engine will send this NCMD to a device/client
-                        # application if it receives an NDATA or DDATA with a metric that was not published in the
-                        # original NBIRTH or DBIRTH.  This is why the application must send all known metrics in
-                        # its original NBIRTH and DBIRTH messages.
-                        self._publish_birth()
-                    elif metric.name == "Node Control/Reboot":
-                        # 'Node Control/Reboot' is an NCMD used to tell a device/client application to reboot
-                        # This can be used for devices that need a full application reset via a soft reboot.
-                        # In this case, we fake a full reboot with a republishing of the NBIRTH and DBIRTH
-                        # messages.
-                        self._publish_birth()
-                    elif metric.name in self.birth_certificate.node_metrics:
-                        # Get value
-                        new_value = self.metric_value_from_type(metric, self.birth_certificate.node_metrics[metric.name])
-                        
-                        # Update state
-                        self.state.set_node_metric(metric.name, new_value)
+                self._handle_ncmd(inbound_payload)
+            elif tokens[2] == 'DCMD':
+                self._handle_dcmd(tokens, inbound_payload)
 
-                    else:
-                        # Invalid metric
-                        print('Invalid metric')
-                        # TODO: Check sparkplug specification for expected behaviour when receiving an invalid metric in NCMD
-                
-            else:
-                device_name = tokens[4]
-                if device_name not in self.state.devices:
-                    # TODO: Check sparkplug specification for expected behaviour when receiving an invalid device id in DCMD
-                    pass
-                for metric in inbound_payload.metrics:
-                    if metric not in self.birth_certificate.devices[device_name]:
-                        # TODO: Check sparkplug specification for expected behaviour when receiving an invalid metric id in DCMD
-                        continue
-                    # Get value
-                    new_value = self.metric_value_from_type(metric, self.birth_certificate.node_metrics[metric.name])
-                    
-                    # Update state
-                    self.state.set_node_metric(metric.name, new_value)
-                
-                    # TODO Do we need to save events to a buffer so that they can be read from .inbound_events()?
-            self.publish_changes()
+        self.publish_changes()
 
 
     def _publish_node_birth(self):
@@ -312,26 +333,32 @@ class Client(mqtt.Client):
         node_changes, device_changes = self.state.get_changes()
     
         payload = sparkplug.Payload()
-        for metric_name, metric_value in node_changes.items():
-            data_type = self.birth_certificate.node_metrics[metric_name]
-            sparkplug.addMetric(payload, metric_name, None, data_type, metric_value)
+        for change in node_changes:
+            data_type = self.birth_certificate.node_metrics[change.metric_name]
+            sparkplug.addMetric(payload, change.metric_name, None, data_type, change.new_value)
         topic = "spBv1.0/" + self.group_id + "/NDATA" + self.node_id
         self.publish(topic, payload.SerializeToString())
 
-        for device_name, metric_change in device_changes.items():
+        for device_change in device_changes:
             payload = sparkplug.Payload()
-            for metric_name, metric_value in metric_change:
+            device_name = device_change.device_id
+            for metric_change in device_change.metric_changes:
+                metric_name = metric_change.metric_name
+                metric_value = metric_change.new_value
                 data_type = self.birth_certificate.device_metrics[device_name][metric_name]
                 sparkplug.addMetric(payload, metric_name, None, data_type, metric_value)
             topic = "spBv1.0/" + self.group_id + "/DDATA" + self.node_id + "/" + device_name
 
             self.publish(topic, payload.SerializeToString())
     
-    def inbound_events(self):
-        pass
+    def inbound_events(self, clear_buffer=True):
+        events = self.event_buffer
+        if clear_buffer:
+            self.event_buffer = []
+        return events
 
     @staticmethod
-    def metric_value_from_type(metric: sparkplug_b_pb2.Metric, data_type: sparkplug.MetricDataType):
+    def metric_value_from_type(metric, data_type: sparkplug.MetricDataType):
         if data_type == sparkplug.MetricDataType.Boolean:
             return metric.bool_value
         elif data_type == sparkplug.MetricDataType.Int8:
@@ -358,101 +385,3 @@ class Client(mqtt.Client):
             return metric.string_value
         else:
             return None
-######################################################################
-# The callback for when the client receives a CONNACK response from the server.
-######################################################################
-def on_connect(client, userdata, flags, rc):
-    if rc == 0:
-        print("Connected with result code "+str(rc))
-    else:
-        print("Failed to connect with result code "+str(rc))
-        sys.exit()
-
-    global myGroupId
-    global myNodeName
-
-    # Subscribing in on_connect() means that if we lose the connection and
-    # reconnect then subscriptions will be renewed.
-    client.subscribe("spBv1.0/" + myGroupId + "/NCMD/" + myNodeName + "/#")
-    client.subscribe("spBv1.0/" + myGroupId + "/DCMD/" + myNodeName + "/#")
-######################################################################
-
-######################################################################
-# The callback for when a PUBLISH message is received from the server.
-######################################################################
-def on_message(client, userdata, msg):
-    print("Message arrived: " + msg.topic)
-    tokens = msg.topic.split("/")
-
-    if tokens[0] == "spBv1.0" and tokens[1] == myGroupId and (tokens[2] == "NCMD" or tokens[2] == "DCMD") and tokens[3] == myNodeName:
-        inboundPayload = sparkplug_b_pb2.Payload()
-        inboundPayload.ParseFromString(msg.payload)
-        for metric in inboundPayload.metrics:
-            if metric.name == "Node Control/Next Server":
-                # 'Node Control/Next Server' is an NCMD used to tell the device/client application to
-                # disconnect from the current MQTT server and connect to the next MQTT server in the
-                # list of available servers.  This is used for clients that have a pool of MQTT servers
-                # to connect to.
-                print( "'Node Control/Next Server' is not implemented in this example")
-            elif metric.name == "Node Control/Rebirth":
-                # 'Node Control/Rebirth' is an NCMD used to tell the device/client application to resend
-                # its full NBIRTH and DBIRTH again.  MQTT Engine will send this NCMD to a device/client
-                # application if it receives an NDATA or DDATA with a metric that was not published in the
-                # original NBIRTH or DBIRTH.  This is why the application must send all known metrics in
-                # its original NBIRTH and DBIRTH messages.
-                publishBirth()
-            elif metric.name == "Node Control/Reboot":
-                # 'Node Control/Reboot' is an NCMD used to tell a device/client application to reboot
-                # This can be used for devices that need a full application reset via a soft reboot.
-                # In this case, we fake a full reboot with a republishing of the NBIRTH and DBIRTH
-                # messages.
-                publishBirth()
-            elif metric.name == "output/Device Metric2":
-                # This is a metric we declared in our DBIRTH message and we're emulating an output.
-                # So, on incoming 'writes' to the output we must publish a DDATA with the new output
-                # value.  If this were a real output we'd write to the output and then read it back
-                # before publishing a DDATA message.
-
-                # We know this is an Int16 because of how we declated it in the DBIRTH
-                newValue = metric.int_value
-                print( "CMD message for output/Device Metric2 - New Value: {}".format(newValue))
-
-                # Create the DDATA payload
-                payload = sparkplug.getDdataPayload()
-                addMetric(payload, None, None, MetricDataType.Int16, newValue)
-
-                # Publish a message data
-                byteArray = bytearray(payload.SerializeToString())
-                client.publish("spBv1.0/" + myGroupId + "/DDATA/" + myNodeName + "/" + myDeviceName, byteArray, 0, False)
-            elif metric.name == "output/Device Metric3":
-                # This is a metric we declared in our DBIRTH message and we're emulating an output.
-                # So, on incoming 'writes' to the output we must publish a DDATA with the new output
-                # value.  If this were a real output we'd write to the output and then read it back
-                # before publishing a DDATA message.
-
-                # We know this is an Boolean because of how we declated it in the DBIRTH
-                newValue = metric.boolean_value
-                print( "CMD message for output/Device Metric3 - New Value: %r" % newValue)
-
-                # Create the DDATA payload
-                payload = sparkplug.getDdataPayload()
-                addMetric(payload, None, None, MetricDataType.Boolean, newValue)
-
-                # Publish a message data
-                byteArray = bytearray(payload.SerializeToString())
-                client.publish("spBv1.0/" + myGroupId + "/DDATA/" + myNodeName + "/" + myDeviceName, byteArray, 0, False)
-            else:
-                print( "Unknown command: " + metric.name)
-    else:
-        print( "Unknown command...")
-
-    print( "Done publishing")
-######################################################################
-
-######################################################################
-# Publish the BIRTH certificates
-######################################################################
-def publishBirth():
-    publishNodeBirth()
-    publishDeviceBirth()
-######################################################################

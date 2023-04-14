@@ -1,9 +1,20 @@
-import sys
-sys.path.insert(0, "../core/")
 import json
 import paho.mqtt.client as mqtt
 import sparkplug_b as sparkplug
 import sparkplug_b_pb2
+
+NUMERIC_SPARKPLUG_TYPES = {
+    sparkplug.MetricDataType.Float,
+    sparkplug.MetricDataType.Double,
+    sparkplug.MetricDataType.Int8,
+    sparkplug.MetricDataType.UInt8,
+    sparkplug.MetricDataType.Int16,
+    sparkplug.MetricDataType.UInt16,
+    sparkplug.MetricDataType.Int32,
+    sparkplug.MetricDataType.UInt32,
+    sparkplug.MetricDataType.Int64,
+    sparkplug.MetricDataType.UInt64,
+}
 
 class State():
 
@@ -21,8 +32,8 @@ class State():
             self.devices[device_name] = {}
             for metric_name, data_type in device_metrics.items():
                 self.devices[device_name][metric_name] = self.get_default_value(data_type)
-        self.old_node_metrics = self.node_metrics.copy()
-        self.old_devices = {device_name: device_metrics.copy() for device_name, device_metrics in self.devices.items()}
+        self._old_node_metrics = self.node_metrics.copy()
+        self._old_devices = {device_name: device_metrics.copy() for device_name, device_metrics in self.devices.items()}
 
     def get_default_value(self, data_type: sparkplug.MetricDataType):
         """
@@ -82,16 +93,14 @@ class State():
         Returns:
         A tuple containing the changes to the node metrics and device metrics respectively.
         """
-        node_changes = {}
-        device_changes = {}
-        node_changes = [MetricChangeEvent(metric_name, value) for metric_name, value in self.node_metrics.items() if self.old_node_metrics[metric_name] != value]
-        self.old_node_metrics = self.node_metrics.copy()
+        node_changes = [MetricChangeEvent(metric_name, value) for metric_name, value in self.node_metrics.items() if self._old_node_metrics[metric_name] != value]
+        self._old_node_metrics = self.node_metrics.copy()
 
         device_changes = []
         for device_name, device_metrics in self.devices.items():
-            device_metric_changes = [MetricChangeEvent(metric_name, value) for metric_name, value in device_metrics.items() if self.old_devices[device_name][metric_name] != value]
-            device_changes += DeviceChangeEvent(device_name, device_metric_changes)
-            self.old_devices[device_name] = device_metrics.copy()
+            device_metric_changes = [MetricChangeEvent(metric_name, value) for metric_name, value in device_metrics.items() if self._old_devices[device_name][metric_name] != value]
+            device_changes.append(DeviceChangeEvent(device_name, device_metric_changes))
+            self._old_devices[device_name] = device_metrics.copy()
 
         return node_changes, device_changes
 
@@ -100,7 +109,7 @@ class BirthCertificate:
     """
     Represents a Sparkplug birth certificate that contains information about the metrics and devices in a node.
     """
-
+    
     def __init__(self, node_metrics: dict, devices: dict):
         """
         Initializes a new instance of the BirthCertificate class.
@@ -170,6 +179,17 @@ class BirthCertificate:
             return sparkplug.MetricDataType.UInt64
         else:
             raise ValueError(f"Invalid datatype: {datatype_str}")
+    
+    @staticmethod
+    def default_from_datatype_string(datatype_str: str):
+        if datatype_str == sparkplug.MetricDataType.Boolean:
+            return False
+        elif datatype_str == sparkplug.MetricDataType.String:
+            return ''
+        elif datatype_str in NUMERIC_SPARKPLUG_TYPES:
+            return 0
+        else:
+            raise ValueError(f"Invalid datatype: {datatype_str}")
 
 class MetricChangeEvent:
     def __init__(self, metric_name: str, new_value):
@@ -182,21 +202,27 @@ class DeviceChangeEvent:
         self.metric_changes = metric_changes
 
 class Client(mqtt.Client):
-    def __init__(self, host, port, keep_alive):
-        super().__init__()
+    def __init__(self, client_id):
+        super().__init__(client_id)
         self.state = None
         self.event_buffer = []
         self.birth_certificate = None
-        self.group_id = ''
-        self.node_id = ''
-        self.broker_address = host
-        self.broker_port = port
-        self.keep_alive_time = keep_alive
         self.connected = False
-        self.on_connect = self._on_connect
-        self.on_message = self._on_message
+        self.on_connect = self.sp_on_connect
+        self.on_message = self.sp_on_message
 
-    def set_birth_certificate(self, birth_certificate: BirthCertificate):
+    def sp_on_connect(self, client, userdata, flags, rc):
+        print(f'self: {self}')
+        print(f'self2: {client}')
+        print(f'userdata: {userdata}')
+        print(f'flags: {flags}')
+        print(f'rc: {rc}')
+        self.subscribe("spBv1.0/" + self.group_id + "/" + self.node_id + "/DCMD/#")
+        self.subscribe("spBv1.0/" + self.group_id + "/" + self.node_id + "/NCMD/#")
+        self.connected = True
+        self._publish_birth()
+
+    def set_birth_certificate(self, birth_certificate: BirthCertificate): 
         # Save birth certificate as a property
         self.birth_certificate = birth_certificate
         
@@ -208,16 +234,15 @@ class Client(mqtt.Client):
         self.group_id = group_id
         self.node_id = node_id
 
-    def connect(self):
+    def connect(self, host, port, keep_alive=60):
         # Initiate and maintain MQTT connection. Subscribe to NCMD and DCMD sparkplug topics according to group 
         # and node ids
-        self.connect(self.broker_address, self.broker_port, self.keep_alive_time)
 
-    def _on_connect(self, userdata, flags, rc):
-        self.subscribe("spBv1.0/" + self.group_id + "/" + self.node_id + "/DCMD/#")
-        self.subscribe("spBv1.0/" + self.group_id + "/" + self.node_id + "/NCMD/#")
-        self.connected = True
-        self._publish_birth()
+        self.broker_address = host
+        self.broker_port = port
+        self.keep_alive_time = keep_alive
+        super().connect(self.broker_address, self.broker_port, self.keep_alive_time)
+        self.loop_start()
 
     def _handle_ncmd(self, inbound_payload):
         for metric in inbound_payload.metrics:
@@ -274,7 +299,7 @@ class Client(mqtt.Client):
             self.event_buffer.append(DeviceChangeEvent(device_name, metric_changes))
 
 
-    def _on_message(self, userdata, msg):
+    def sp_on_message(self, userdata, msg):
         print("Message arrived: " + msg.topic)
         tokens = msg.topic.split("/")
 
@@ -293,16 +318,15 @@ class Client(mqtt.Client):
         print("Publishing Node Birth")
 
         # Create the node birth payload
-        payload = sparkplug.Payload()
-
+        payload = sparkplug.getNodeBirthPayload()
         # Add node control metrics
         sparkplug.addMetric(payload, "Node Control/Next Server", None, sparkplug.MetricDataType.Boolean, False)
         sparkplug.addMetric(payload, "Node Control/Rebirth", None, sparkplug.MetricDataType.Boolean, False)
-        sparkplug.addMetric(payload, "Node Control/Reboot", None, sparkplug.MetricDataType.Boolean)
+        sparkplug.addMetric(payload, "Node Control/Reboot", None, sparkplug.MetricDataType.Boolean, False)
 
         # Add metrics from birth certificate
-        for metric_name, metric_data_type in self.birth_certificate.metrics.items():
-            sparkplug.addMetric(payload, metric_name, None, metric_data_type, 0)
+        for metric_name, metric_data_type in self.birth_certificate.node_metrics.items():
+            sparkplug.addMetric(payload, metric_name, None, metric_data_type, BirthCertificate.default_from_datatype_string(metric_data_type))
 
         # Publish the node birth certificate
         byteArray = bytearray(payload.SerializeToString())
@@ -317,7 +341,7 @@ class Client(mqtt.Client):
         # Add metrics from birth certificate for the given device
         device_metrics = self.birth_certificate.devices.get(device_name, {})
         for metric_name, metric_data_type in device_metrics.items():
-            sparkplug.addMetric(payload, metric_name, None, metric_data_type, 0)
+            sparkplug.addMetric(payload, metric_name, None, metric_data_type, BirthCertificate.default_from_datatype_string(metric_data_type))
 
         # Publish the device birth certificate
         byteArray = bytearray(payload.SerializeToString())
@@ -325,29 +349,29 @@ class Client(mqtt.Client):
     
     def _publish_birth(self):
         self._publish_node_birth()
-        for device_name in self.birth_certificate.device_metrics:
+        for device_name in self.birth_certificate.devices:
             self._publish_device_birth(device_name)
 
     def publish_changes(self):
         # Publish changes in state since last call
         node_changes, device_changes = self.state.get_changes()
     
-        payload = sparkplug.Payload()
+        payload = sparkplug.getNodeBirthPayload()
         for change in node_changes:
             data_type = self.birth_certificate.node_metrics[change.metric_name]
             sparkplug.addMetric(payload, change.metric_name, None, data_type, change.new_value)
-        topic = "spBv1.0/" + self.group_id + "/NDATA" + self.node_id
+        topic = "spBv1.0/" + self.group_id + "/NDATA/" + self.node_id
         self.publish(topic, payload.SerializeToString())
 
         for device_change in device_changes:
-            payload = sparkplug.Payload()
+            payload = sparkplug.getDdataPayload()
             device_name = device_change.device_id
             for metric_change in device_change.metric_changes:
                 metric_name = metric_change.metric_name
                 metric_value = metric_change.new_value
-                data_type = self.birth_certificate.device_metrics[device_name][metric_name]
+                data_type = self.birth_certificate.devices[device_name][metric_name]
                 sparkplug.addMetric(payload, metric_name, None, data_type, metric_value)
-            topic = "spBv1.0/" + self.group_id + "/DDATA" + self.node_id + "/" + device_name
+            topic = "spBv1.0/" + self.group_id + "/DDATA/" + self.node_id + "/" + device_name
 
             self.publish(topic, payload.SerializeToString())
     

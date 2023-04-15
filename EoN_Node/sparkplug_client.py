@@ -3,6 +3,7 @@ import paho.mqtt.client as mqtt
 import sparkplug_b as sparkplug
 import sparkplug_b_pb2
 
+NAMESPACE = 'spBv1.0'
 NUMERIC_SPARKPLUG_TYPES = {
     sparkplug.MetricDataType.Float,
     sparkplug.MetricDataType.Double,
@@ -99,7 +100,8 @@ class State():
         device_changes = []
         for device_name, device_metrics in self.devices.items():
             device_metric_changes = [MetricChangeEvent(metric_name, value) for metric_name, value in device_metrics.items() if self._old_devices[device_name][metric_name] != value]
-            device_changes.append(DeviceChangeEvent(device_name, device_metric_changes))
+            if device_metric_changes:
+                device_changes.append(DeviceChangeEvent(device_name, device_metric_changes))
             self._old_devices[device_name] = device_metrics.copy()
 
         return node_changes, device_changes
@@ -210,17 +212,24 @@ class Client(mqtt.Client):
         self.connected = False
         self.on_connect = self.sp_on_connect
         self.on_message = self.sp_on_message
+        self.on_subscribe = self.sp_on_subscribe
+        self.payload_seq = 0
 
-    def sp_on_connect(self, client, userdata, flags, rc):
-        print(f'self: {self}')
+    @staticmethod
+    def sp_on_connect(client, userdata, flags, rc):
+        print('Connected!')
         print(f'self2: {client}')
         print(f'userdata: {userdata}')
         print(f'flags: {flags}')
         print(f'rc: {rc}')
-        self.subscribe("spBv1.0/" + self.group_id + "/" + self.node_id + "/DCMD/#")
-        self.subscribe("spBv1.0/" + self.group_id + "/" + self.node_id + "/NCMD/#")
-        self.connected = True
-        self._publish_birth()
+        client.subscribe("spBv1.0/" + client.group_id + "/" + client.node_id + "/DCMD/#")
+        client.subscribe("spBv1.0/" + client.group_id + "/" + client.node_id + "/NCMD/#")
+        client.connected = True
+        client._publish_birth()
+
+    @staticmethod
+    def sp_on_subscribe(client, userdata, mid, granted_qos):
+        print(f'Subscribed to "{"something"}"')
 
     def set_birth_certificate(self, birth_certificate: BirthCertificate): 
         # Save birth certificate as a property
@@ -233,6 +242,10 @@ class Client(mqtt.Client):
         # Set the group id and node id for this client
         self.group_id = group_id
         self.node_id = node_id
+        self.will_set(
+            f'{NAMESPACE}/{group_id}/NDEATH/{node_id}',
+            bytearray(sparkplug.getNodeDeathPayload().SerializeToString())
+            )
 
     def connect(self, host, port, keep_alive=60):
         # Initiate and maintain MQTT connection. Subscribe to NCMD and DCMD sparkplug topics according to group 
@@ -298,20 +311,20 @@ class Client(mqtt.Client):
         if metric_changes:
             self.event_buffer.append(DeviceChangeEvent(device_name, metric_changes))
 
-
-    def sp_on_message(self, userdata, msg):
+    @staticmethod
+    def sp_on_message(client, userdata, msg):
         print("Message arrived: " + msg.topic)
         tokens = msg.topic.split("/")
 
-        if tokens[0] == "spBv1.0" and tokens[1] == self.group_id and tokens[3] == self.node_id:
+        if tokens[0] == "spBv1.0" and tokens[1] == client.group_id and tokens[3] == client.node_id:
             inbound_payload = sparkplug_b_pb2.Payload()
             inbound_payload.ParseFromString(msg.payload)
             if tokens[2] == 'NCMD': 
-                self._handle_ncmd(inbound_payload)
+                client._handle_ncmd(inbound_payload)
             elif tokens[2] == 'DCMD':
-                self._handle_dcmd(tokens, inbound_payload)
+                client._handle_dcmd(tokens, inbound_payload)
 
-        self.publish_changes()
+        client.publish_changes()
 
 
     def _publish_node_birth(self):
@@ -319,6 +332,9 @@ class Client(mqtt.Client):
 
         # Create the node birth payload
         payload = sparkplug.getNodeBirthPayload()
+        self.set_seq(payload.seq)
+        
+
         # Add node control metrics
         sparkplug.addMetric(payload, "Node Control/Next Server", None, sparkplug.MetricDataType.Boolean, False)
         sparkplug.addMetric(payload, "Node Control/Rebirth", None, sparkplug.MetricDataType.Boolean, False)
@@ -331,12 +347,14 @@ class Client(mqtt.Client):
         # Publish the node birth certificate
         byteArray = bytearray(payload.SerializeToString())
         self.publish(f"spBv1.0/{self.group_id}/NBIRTH/{self.node_id}", byteArray, 0, False)
+        print(f'Published NBIRTH payload.seq = {payload.seq}')
 
     def _publish_device_birth(self, device_name: str):
         print(f"Publishing Birth Certificate for {device_name}")
 
         # Get the payload
         payload = sparkplug.getDeviceBirthPayload()
+        self.set_seq(payload.seq) # getDeviceBirthPayload increments seq by itself.
 
         # Add metrics from birth certificate for the given device
         device_metrics = self.birth_certificate.devices.get(device_name, {})
@@ -346,6 +364,8 @@ class Client(mqtt.Client):
         # Publish the device birth certificate
         byteArray = bytearray(payload.SerializeToString())
         self.publish(f"spBv1.0/{self.group_id}/DBIRTH/{self.node_id}/{device_name}", byteArray, 0, False)
+        # print(f'Published DBIRTH payload.seq = {payload.seq}')
+
     
     def _publish_birth(self):
         self._publish_node_birth()
@@ -356,30 +376,53 @@ class Client(mqtt.Client):
         # Publish changes in state since last call
         node_changes, device_changes = self.state.get_changes()
     
-        payload = sparkplug.getNodeBirthPayload()
+        if node_changes:
+            self.publish_node_changes(node_changes)
+
+        if device_changes:
+            self.publish_device_changes(device_changes)
+        
+    def publish_node_changes(self, node_changes):
+        payload = sparkplug.Payload()
+        payload.seq = self.next_seq()
+
         for change in node_changes:
             data_type = self.birth_certificate.node_metrics[change.metric_name]
             sparkplug.addMetric(payload, change.metric_name, None, data_type, change.new_value)
-        topic = "spBv1.0/" + self.group_id + "/NDATA/" + self.node_id
-        self.publish(topic, payload.SerializeToString())
+        topic = f'{NAMESPACE}/{self.group_id}/NDATA/{self.node_id}'
+        self.publish(topic, bytearray(payload.SerializeToString()))
+        print(f'Published NDATA for {self.group_id}/{self.node_id} | {len(node_changes)} metrics | payload.seq = {payload.seq}')
 
+    def publish_device_changes(self, device_changes):
         for device_change in device_changes:
             payload = sparkplug.getDdataPayload()
+            payload.seq = self.next_seq()
+
             device_name = device_change.device_id
             for metric_change in device_change.metric_changes:
                 metric_name = metric_change.metric_name
                 metric_value = metric_change.new_value
                 data_type = self.birth_certificate.devices[device_name][metric_name]
                 sparkplug.addMetric(payload, metric_name, None, data_type, metric_value)
-            topic = "spBv1.0/" + self.group_id + "/DDATA/" + self.node_id + "/" + device_name
+            topic = f'{NAMESPACE}/{self.group_id}/DDATA/{self.node_id}/{device_name}'
 
-            self.publish(topic, payload.SerializeToString())
-    
+            self.publish(topic, bytearray(payload.SerializeToString()))
+            print(f'Published DDATA for {device_name} | {len(device_change.metric_changes)} metrics | payload.seq = {payload.seq}')
+
     def inbound_events(self, clear_buffer=True):
         events = self.event_buffer
         if clear_buffer:
             self.event_buffer = []
         return events
+
+    def set_seq(self, new_seq):
+        self.payload_seq = new_seq
+
+    def next_seq(self):
+        self.payload_seq += 1
+        if self.payload_seq == 256:
+            self.payload_seq = 0
+        return self.payload_seq
 
     @staticmethod
     def metric_value_from_type(metric, data_type: sparkplug.MetricDataType):

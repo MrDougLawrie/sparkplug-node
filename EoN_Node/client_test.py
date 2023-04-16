@@ -25,7 +25,7 @@ client.state.set_node_metric('inverter_status', True)
 client.state.set_device_metric('battery', 'voltage', 798.81)
 
 client.publish_changes()
-for _ in range(100):
+for _ in range(50):
     client.state.set_node_metric('solar_power', random.gauss(60, 5))
     client.state.set_device_metric('battery', 'voltage', random.gauss(800, 1))
     client.publish_changes()

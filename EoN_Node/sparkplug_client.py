@@ -2,6 +2,8 @@ import json
 import paho.mqtt.client as mqtt
 import sparkplug_b as sparkplug
 import sparkplug_b_pb2
+from typing import List, Tuple
+import copy
 
 NAMESPACE = 'spBv1.0'
 NUMERIC_SPARKPLUG_TYPES = {
@@ -17,26 +19,70 @@ NUMERIC_SPARKPLUG_TYPES = {
     sparkplug.MetricDataType.UInt64,
 }
 
-class State():
+def sparkplug_type_from_str(datatype_str: str) -> 'sparkplug.MetricDataType':
+    """
+    Gets the Sparkplug data type that corresponds to the given string.
 
-    def __init__(self, birth_certificate):
-        """
-        Creates a new instance of the `State` class with metrics initialized to their default values.
-        
-        Args:
-        birth_certificate (BirthCertificate): An instance of the `BirthCertificate` class.
-        """
-        self.node_metrics = {metric_name: self.get_default_value(data_type) 
-            for metric_name, data_type in birth_certificate.node_metrics.items()}
-        self.devices = {}
-        for device_name, device_metrics in birth_certificate.devices.items():
-            self.devices[device_name] = {}
-            for metric_name, data_type in device_metrics.items():
-                self.devices[device_name][metric_name] = self.get_default_value(data_type)
-        self._old_node_metrics = self.node_metrics.copy()
-        self._old_devices = {device_name: device_metrics.copy() for device_name, device_metrics in self.devices.items()}
+    Args:
+        datatype_str (str): The string representation of the data type.
 
-    def get_default_value(self, data_type: sparkplug.MetricDataType):
+    Returns:
+        sparkplug.MetricDataType: The corresponding Sparkplug data type.
+
+    Raises:
+        ValueError: If the given data type string is invalid.
+    """
+    datatype_str = datatype_str.lower()
+    if datatype_str == "bool":
+        return sparkplug.MetricDataType.Boolean
+    elif datatype_str == "string":
+        return sparkplug.MetricDataType.String
+    elif datatype_str == "float":
+        return sparkplug.MetricDataType.Float
+    elif datatype_str == "double":
+        return sparkplug.MetricDataType.Double
+    elif datatype_str == "int8":
+        return sparkplug.MetricDataType.Int8
+    elif datatype_str == "uint8":
+        return sparkplug.MetricDataType.UInt8
+    elif datatype_str == "int16":
+        return sparkplug.MetricDataType.Int16
+    elif datatype_str == "uint16":
+        return sparkplug.MetricDataType.UInt16
+    elif datatype_str == "int32":
+        return sparkplug.MetricDataType.Int32
+    elif datatype_str == "uint32":
+        return sparkplug.MetricDataType.UInt32
+    elif datatype_str == "int64":
+        return sparkplug.MetricDataType.Int64
+    elif datatype_str == "uint64":
+        return sparkplug.MetricDataType.UInt64
+    else:
+        raise ValueError(f"Invalid datatype: {datatype_str}")
+
+class Metric(): 
+    def __init__(self, name: str, datatype_str: str, value=None):
+        self.name = name
+        self.datatype_str = datatype_str
+        self.datatype_sp = sparkplug_type_from_str(datatype_str)
+        if value:
+            self.value = value
+        else:
+            self.value = self.default_from_sparkplug_type(self.datatype_sp)
+    
+    def __eq__(self, other):
+        if isinstance(other, self.__class__):
+            return self.value == other.value
+        elif isinstance(other, type(self.value)):
+            return self.value == other
+        else:
+            return False
+    
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+    
+    @staticmethod
+    def default_from_sparkplug_type(data_type: sparkplug.MetricDataType):
         """
         Returns the default value for a given sparkplug data type.
 
@@ -53,6 +99,103 @@ class State():
         else:
             return 0
 
+class Device():
+    def __init__(self, name: str, metrics: dict[str, Metric]):
+        self.name = name
+        self.metrics = metrics
+
+class MetricChangeEvent:
+    def __init__(self, metric_name: str, metric: Metric, prev_value=None):
+        if type(metric_name) is not str:
+            raise TypeError(f'Error creating MetricChangeEvent. metric_name must be of type str, not {type(metric_name)}')
+        if type(metric) is not Metric:
+            raise TypeError(f'Error creating MetricChangeEvent. metric must be of type Metric, not {type(metric_name)}')
+        self.metric_name = metric_name
+        self.new_value = metric.value
+        self.datatype_sp = metric.datatype_sp
+    
+    def __repr__(self):
+        return f"MetricChangeEvent 'metric_name': {self.metric_name} 'new_value': {self.new_value}, 'datatype_sp': {self.datatype_sp}"
+
+class DeviceChangeEvent:
+    def __init__(self, device_id: str, metric_changes: list[MetricChangeEvent]):
+        if type(device_id) is not str:
+            raise TypeError(f'Error creating DeviceChangeEvent. device_id must be of type str, not {type(device_id)}')
+        if type(metric_changes) is not list:
+            raise TypeError(f'Error creating DeviceChangeEvent. device_id must be a lit of MetricChangeEvent, not {type(metric_changes)}')
+        self.device_id = device_id
+        self.metric_changes = metric_changes
+    
+    def __repr__(self):
+        return f"DeviceChangeEvent('{self.device_id}', {self.metric_changes})"
+
+class BirthCertificate:
+    """
+    Represents a Sparkplug birth certificate that contains information about the metrics and devices in a node.
+    """
+    
+    def __init__(self, node_metrics: dict, devices: dict):
+        """
+        Initializes a new instance of the BirthCertificate class.
+
+        Args:
+            node_metrics (dict): A dictionary with the structure node_metrics[metric_name]['datatype', 'value']
+            devices (dict): A dictionary with the structure devices[device_name][metric_name]['datatype', 'value']
+        """
+        #TODO check the structure of node metrics and device metrics 
+        self.node_metrics = node_metrics
+        self.devices = devices
+    
+    @staticmethod
+    def from_file(filename: str) -> 'BirthCertificate':
+        """
+        Creates a new instance of the BirthCertificate class from a birth certificate JSON file.
+
+        Args:
+            filename (str): The path of the Sparkplug birth certificate file.
+
+        Returns:
+            BirthCertificate: A new instance of the BirthCertificate class.
+        """
+        with open(filename, 'r') as f:
+            birth_certificate = json.load(f)
+            node_metrics = birth_certificate['node']['metrics']
+            devices = birth_certificate['node']['devices']
+            return BirthCertificate(node_metrics, devices)
+    
+    @staticmethod
+    def default_from_datatype_string(datatype):
+        print(datatype)
+        if datatype == sparkplug.MetricDataType.Boolean:
+            return False
+        elif datatype == sparkplug.MetricDataType.String:
+            return ''
+        elif datatype in NUMERIC_SPARKPLUG_TYPES:
+            return 0
+        else:
+            raise ValueError(f"Invalid datatype: {datatype}")
+
+class State():
+
+    def __init__(self, birth_certificate: BirthCertificate):
+        """
+        Creates a new instance of the `State` class with metrics initialized to their default values.
+        
+        Args:
+        birth_certificate (BirthCertificate): An instance of the `BirthCertificate` class.
+        """
+        # self.node_metrics = {metric_name: self.get_default_value(data_type) 
+        #     for metric_name, metric in birth_certificate.node_metrics.items()}
+        self.node_metrics = {metric_name: Metric(metric_name, metric['datatype'], metric['value']) for metric_name, metric in birth_certificate.node_metrics.items()}
+        
+        self.devices = {}
+        for device_name, device in birth_certificate.devices.items():
+            device_metrics = {metric_name: Metric(metric_name, metric['datatype'], metric['value']) for metric_name, metric in device['metrics'].items()}
+            self.devices[device_name] = Device(device_name, device_metrics)
+
+        self._old_node_metrics = copy.deepcopy(self.node_metrics)
+        self._old_devices = {device_name: copy.deepcopy(device) for device_name, device in self.devices.items()}
+
     def set_node_metric(self, metric_name: str, value):
         """
         Sets the value of a node metric.
@@ -65,7 +208,7 @@ class State():
         ValueError: If the metric is not found in the node metrics.
         """
         if metric_name in self.node_metrics:
-            self.node_metrics[metric_name] = value
+            self.node_metrics[metric_name].value = value
         else:
             raise ValueError(f"Metric {metric_name} not found in node metrics")
 
@@ -83,125 +226,28 @@ class State():
         """
         if device_name not in self.devices:
             raise ValueError(f"Device {device_name} not found in devices")
-        if metric_name not in self.devices[device_name]:
+        if metric_name not in self.devices[device_name].metrics:
             raise ValueError(f"Metric {metric_name} not found in device {device_name} metrics")
-        self.devices[device_name][metric_name] = value
+        self.devices[device_name].metrics[metric_name].value = value
 
-    def get_changes(self):
+    def get_changes(self) -> Tuple[List[MetricChangeEvent], List[DeviceChangeEvent]]:
         """
         Compares the current state of the metrics to the previous state and returns the changes.
 
         Returns:
         A tuple containing the changes to the node metrics and device metrics respectively.
         """
-        node_changes = [MetricChangeEvent(metric_name, value) for metric_name, value in self.node_metrics.items() if self._old_node_metrics[metric_name] != value]
-        self._old_node_metrics = self.node_metrics.copy()
+        node_changes = [MetricChangeEvent(metric_name, metric) for metric_name, metric in self.node_metrics.items() if self._old_node_metrics[metric_name] != metric]
+        self._old_node_metrics = copy.deepcopy(self.node_metrics)
 
         device_changes = []
-        for device_name, device_metrics in self.devices.items():
-            device_metric_changes = [MetricChangeEvent(metric_name, value) for metric_name, value in device_metrics.items() if self._old_devices[device_name][metric_name] != value]
+        for device_name, device in self.devices.items():
+            device_metric_changes = [MetricChangeEvent(metric_name, metric) for metric_name, metric in device.metrics.items() if self._old_devices[device_name].metrics[metric_name] != metric]
             if device_metric_changes:
                 device_changes.append(DeviceChangeEvent(device_name, device_metric_changes))
-            self._old_devices[device_name] = device_metrics.copy()
+            self._old_devices[device_name] = copy.deepcopy(device)
 
         return node_changes, device_changes
-
-
-class BirthCertificate:
-    """
-    Represents a Sparkplug birth certificate that contains information about the metrics and devices in a node.
-    """
-    
-    def __init__(self, node_metrics: dict, devices: dict):
-        """
-        Initializes a new instance of the BirthCertificate class.
-
-        Args:
-            node_metrics (dict): A dictionary that maps metric names to their data types for the node.
-            devices (dict): A dictionary that maps device names to a dictionary of their metrics and their data types.
-        """
-        self.node_metrics = node_metrics
-        self.devices = devices
-    
-    @staticmethod
-    def from_file(filename: str) -> 'BirthCertificate':
-        """
-        Creates a new instance of the BirthCertificate class from a Sparkplug birth certificate file.
-
-        Args:
-            filename (str): The path of the Sparkplug birth certificate file.
-
-        Returns:
-            BirthCertificate: A new instance of the BirthCertificate class.
-        """
-        with open(filename, 'r') as f:
-            birth_certificate = json.load(f)
-            node_metrics = {metric['name']: BirthCertificate.get_metric_datatype(metric['datatype']) for metric in birth_certificate['node']['metrics']}
-            devices = {device['name']: {metric['name']: BirthCertificate.get_metric_datatype(metric['datatype']) for metric in device['metrics']} for device in birth_certificate['devices']}
-            return BirthCertificate(node_metrics, devices)
-
-    @staticmethod
-    def get_metric_datatype(datatype_str: str) -> 'sparkplug.MetricDataType':
-        """
-        Gets the Sparkplug data type that corresponds to the given string.
-
-        Args:
-            datatype_str (str): The string representation of the data type.
-
-        Returns:
-            sparkplug.MetricDataType: The corresponding Sparkplug data type.
-
-        Raises:
-            ValueError: If the given data type string is invalid.
-        """
-        datatype_str = datatype_str.lower()
-        if datatype_str == "bool":
-            return sparkplug.MetricDataType.Boolean
-        elif datatype_str == "string":
-            return sparkplug.MetricDataType.String
-        elif datatype_str == "float":
-            return sparkplug.MetricDataType.Float
-        elif datatype_str == "double":
-            return sparkplug.MetricDataType.Double
-        elif datatype_str == "int8":
-            return sparkplug.MetricDataType.Int8
-        elif datatype_str == "uint8":
-            return sparkplug.MetricDataType.UInt8
-        elif datatype_str == "int16":
-            return sparkplug.MetricDataType.Int16
-        elif datatype_str == "uint16":
-            return sparkplug.MetricDataType.UInt16
-        elif datatype_str == "int32":
-            return sparkplug.MetricDataType.Int32
-        elif datatype_str == "uint32":
-            return sparkplug.MetricDataType.UInt32
-        elif datatype_str == "int64":
-            return sparkplug.MetricDataType.Int64
-        elif datatype_str == "uint64":
-            return sparkplug.MetricDataType.UInt64
-        else:
-            raise ValueError(f"Invalid datatype: {datatype_str}")
-    
-    @staticmethod
-    def default_from_datatype_string(datatype_str: str):
-        if datatype_str == sparkplug.MetricDataType.Boolean:
-            return False
-        elif datatype_str == sparkplug.MetricDataType.String:
-            return ''
-        elif datatype_str in NUMERIC_SPARKPLUG_TYPES:
-            return 0
-        else:
-            raise ValueError(f"Invalid datatype: {datatype_str}")
-
-class MetricChangeEvent:
-    def __init__(self, metric_name: str, new_value):
-        self.metric_name = metric_name
-        self.new_value = new_value
-
-class DeviceChangeEvent:
-    def __init__(self, device_id: str, metric_changes: list[MetricChangeEvent]):
-        self.device_id = device_id
-        self.metric_changes = metric_changes
 
 class Client(mqtt.Client):
     def __init__(self, client_id):
@@ -283,7 +329,7 @@ class Client(mqtt.Client):
                 self.state.set_node_metric(metric.name, new_value)
 
                 # Appnd to metric change event buffer so that user can get new events from .inbound_events()
-                self.event_buffer.append(MetricChangeEvent(metric.name, new_value))
+                self.event_buffer.append(MetricChangeEvent(metric.name, metric.value))
             else:
                 # Invalid metric
                 print(f"Received NCMD with invalid metric {metric.name}. Ignoring.")
@@ -340,9 +386,9 @@ class Client(mqtt.Client):
         sparkplug.addMetric(payload, "Node Control/Rebirth", None, sparkplug.MetricDataType.Boolean, False)
         sparkplug.addMetric(payload, "Node Control/Reboot", None, sparkplug.MetricDataType.Boolean, False)
 
-        # Add metrics from birth certificate
-        for metric_name, metric_data_type in self.birth_certificate.node_metrics.items():
-            sparkplug.addMetric(payload, metric_name, None, metric_data_type, BirthCertificate.default_from_datatype_string(metric_data_type))
+        # Add metrics from state
+        for metric_name, metric in self.state.node_metrics.items():
+            sparkplug.addMetric(payload, metric_name, None, metric.datatype_sp, metric.value)
 
         # Publish the node birth certificate
         byteArray = bytearray(payload.SerializeToString())
@@ -356,10 +402,9 @@ class Client(mqtt.Client):
         payload = sparkplug.getDeviceBirthPayload()
         self.set_seq(payload.seq) # getDeviceBirthPayload increments seq by itself.
 
-        # Add metrics from birth certificate for the given device
-        device_metrics = self.birth_certificate.devices.get(device_name, {})
-        for metric_name, metric_data_type in device_metrics.items():
-            sparkplug.addMetric(payload, metric_name, None, metric_data_type, BirthCertificate.default_from_datatype_string(metric_data_type))
+        # Add metrics from state for the given device
+        for metric_name, metric in self.state.devices[device_name].metrics.items():
+            sparkplug.addMetric(payload, metric_name, None, metric.datatype_sp, metric.value)
 
         # Publish the device birth certificate
         byteArray = bytearray(payload.SerializeToString())
@@ -375,35 +420,31 @@ class Client(mqtt.Client):
     def publish_changes(self):
         # Publish changes in state since last call
         node_changes, device_changes = self.state.get_changes()
-    
+
         if node_changes:
             self.publish_node_changes(node_changes)
 
         if device_changes:
             self.publish_device_changes(device_changes)
         
-    def publish_node_changes(self, node_changes):
+    def publish_node_changes(self, node_changes: List[MetricChangeEvent]):
         payload = sparkplug.Payload()
         payload.seq = self.next_seq()
 
         for change in node_changes:
-            data_type = self.birth_certificate.node_metrics[change.metric_name]
-            sparkplug.addMetric(payload, change.metric_name, None, data_type, change.new_value)
+            sparkplug.addMetric(payload, change.metric_name, None, change.datatype_sp, change.new_value)
         topic = f'{NAMESPACE}/{self.group_id}/NDATA/{self.node_id}'
         self.publish(topic, bytearray(payload.SerializeToString()))
         print(f'Published NDATA for {self.group_id}/{self.node_id} | {len(node_changes)} metrics | payload.seq = {payload.seq}')
 
-    def publish_device_changes(self, device_changes):
+    def publish_device_changes(self, device_changes: List[DeviceChangeEvent]):
         for device_change in device_changes:
             payload = sparkplug.getDdataPayload()
             payload.seq = self.next_seq()
 
             device_name = device_change.device_id
             for metric_change in device_change.metric_changes:
-                metric_name = metric_change.metric_name
-                metric_value = metric_change.new_value
-                data_type = self.birth_certificate.devices[device_name][metric_name]
-                sparkplug.addMetric(payload, metric_name, None, data_type, metric_value)
+                sparkplug.addMetric(payload, metric_change.metric_name, None, metric_change.datatype_sp, metric_change.new_value)
             topic = f'{NAMESPACE}/{self.group_id}/DDATA/{self.node_id}/{device_name}'
 
             self.publish(topic, bytearray(payload.SerializeToString()))

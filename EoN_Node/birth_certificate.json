@@ -1,67 +1,66 @@
 {
     "node": {
         "name": "PLC",
-        "metrics": [
-            {
-                "name": "solar_power",
-                "datatype": "float"
+        "metrics": {
+            "solar_power": {
+                "datatype": "float",
+                "value": 0
             },
-            {
-                "name": "load_power",
-                "datatype": "float"
+            "load_power": {
+                "datatype": "float",
+                "value": 0
             },
-            {
-                "name": "inverter_status",
-                "datatype": "bool"
+            "inverter_status": {
+                "datatype": "bool",
+                "value": false
             },
-            {
-                "name": "inverter_fault_code",
-                "datatype": "uint16"
+            "inverter_fault_code": {
+                "datatype": "uint16",
+                "value": 0
             },
-            {
-                "name": "ip_address",
-                "datatype": "string"
+            "ip_address": {
+                "datatype": "string",
+                "value": "0.0.0.0"
             },
-            {
-                "name": "uptime",
-                "datatype": "uint64"
+            "uptime": {
+                "datatype": "uint64",
+                "value": 0
             }
-        ]
-    },
-    "devices": [
-        {
-            "name": "solar_panel",
-            "metrics": [
-                {
-                    "name": "voltage",
-                    "datatype": "float"
-                },
-                {
-                    "name": "current",
-                    "datatype": "float"
-                }
-            ]
         },
-        {
-            "name": "battery",
-            "metrics": [
-                {
-                    "name": "voltage",
-                    "datatype": "float"
-                },
-                {
-                    "name": "current",
-                    "datatype": "float"
-                },
-                {
-                    "name": "temperature",
-                    "datatype": "float"
-                },
-                {
-                    "name": "state_of_charge",
-                    "datatype": "uint16"
+
+        "devices": {
+            "solar_panel": {
+                "metrics": {
+                    "voltage": {
+                        "datatype": "float",
+                        "value": 0
+                    },
+                    "current": {
+                        "datatype": "float",
+                        "value": 0
+                    }
                 }
-            ]
+            },
+            "battery": {
+                "metrics": {
+                    "voltage": {
+                        "datatype": "float",
+                        "value": 0
+                    },
+                    "current": {
+                        "datatype": "float",
+                        "value": 0
+                    },
+                    "temperature": {
+                        "datatype": "float",
+                        "value": 0
+                    },
+                    "state_of_charge": {
+                        "datatype": "uint16",
+                        "value": 32767
+                    }
+                }
+            }
         }
-    ]
+    }
 }

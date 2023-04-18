@@ -336,8 +336,8 @@ class Client(mqtt.Client):
         print('Connected!')
         print(f'flags: {flags}')
         print(f'rc: {rc}')
-        client.subscribe("spBv1.0/" + client.group_id + "/" + client.node_id + "/DCMD/#")
-        client.subscribe("spBv1.0/" + client.group_id + "/" + client.node_id + "/NCMD/#")
+        client.subscribe(f"{NAMESPACE}/{client.group_id}/NCMD/{client.node_id}/#")
+        client.subscribe(f"{NAMESPACE}/{client.group_id}/DCMD/{client.node_id}/#")
         client.connected = True
         client._publish_birth()
 

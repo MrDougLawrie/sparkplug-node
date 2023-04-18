@@ -19,6 +19,7 @@ client.username_pw_set('test-user','password')
 client.connect(BROKER_ADDRESS, BROKER_PORT)
 time.sleep(1)
 client.state.set_node_metric('solar_power', 54.34)
+
 client.state.set_node_metric('solar_power', 55.56)
 client.state.set_node_metric('ip_address', '192.168.20.8')
 client.state.set_node_metric('inverter_status', True)

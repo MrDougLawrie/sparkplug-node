@@ -6,7 +6,7 @@ from typing import List, Tuple
 import copy
 
 NAMESPACE = 'spBv1.0'
-NUMERIC_SPARKPLUG_TYPES = {
+NUMERIC_SPARKPLUG_METRIC_TYPES = {
     sparkplug.MetricDataType.Float,
     sparkplug.MetricDataType.Double,
     sparkplug.MetricDataType.Int8,
@@ -17,6 +17,19 @@ NUMERIC_SPARKPLUG_TYPES = {
     sparkplug.MetricDataType.UInt32,
     sparkplug.MetricDataType.Int64,
     sparkplug.MetricDataType.UInt64,
+}
+
+NUMERIC_SPARKPLUG_PARAMETER_TYPES = {
+    sparkplug.ParameterDataType.Float,
+    sparkplug.ParameterDataType.Double,
+    sparkplug.ParameterDataType.Int8,
+    sparkplug.ParameterDataType.UInt8,
+    sparkplug.ParameterDataType.Int16,
+    sparkplug.ParameterDataType.UInt16,
+    sparkplug.ParameterDataType.Int32,
+    sparkplug.ParameterDataType.UInt32,
+    sparkplug.ParameterDataType.Int64,
+    sparkplug.ParameterDataType.UInt64,
 }
 
 def sparkplug_type_from_str(datatype_str: str) -> 'sparkplug.MetricDataType':
@@ -60,8 +73,70 @@ def sparkplug_type_from_str(datatype_str: str) -> 'sparkplug.MetricDataType':
     else:
         raise ValueError(f"Invalid datatype: {datatype_str}")
 
-class Metric(): 
+def sparkplug_param_type_from_str(datatype_str: str) -> 'sparkplug.ParameterDataType':
+    """
+    Gets the Sparkplug data type that corresponds to the given string.
+
+    Args:
+        datatype_str (str): The string representation of the data type.
+
+    Returns:
+        sparkplug.MetricDataType: The corresponding Sparkplug data type.
+
+    Raises:
+        ValueError: If the given data type string is invalid.
+    """
+    datatype_str = datatype_str.lower()
+    if datatype_str == "bool":
+        return sparkplug.ParameterDataType.Boolean
+    elif datatype_str == "string":
+        return sparkplug.ParameterDataType.String
+    elif datatype_str == "float":
+        return sparkplug.ParameterDataType.Float
+    elif datatype_str == "double":
+        return sparkplug.ParameterDataType.Double
+    elif datatype_str == "int8":
+        return sparkplug.ParameterDataType.Int8
+    elif datatype_str == "uint8":
+        return sparkplug.ParameterDataType.UInt8
+    elif datatype_str == "int16":
+        return sparkplug.ParameterDataType.Int16
+    elif datatype_str == "uint16":
+        return sparkplug.ParameterDataType.UInt16
+    elif datatype_str == "int32":
+        return sparkplug.ParameterDataType.Int32
+    elif datatype_str == "uint32":
+        return sparkplug.ParameterDataType.UInt32
+    elif datatype_str == "int64":
+        return sparkplug.ParameterDataType.Int64
+    elif datatype_str == "uint64":
+        return sparkplug.ParameterDataType.UInt64
+    else:
+        raise ValueError(f"Invalid datatype: {datatype_str}")
+
+class Property():
     def __init__(self, name: str, datatype_str: str, value=None):
+        self.name = name
+        self.datatype_str = datatype_str
+        self.datatype_sp = sparkplug_param_type_from_str(datatype_str)
+        self.value = value
+    
+    def __eq__(self, other):
+        if isinstance(other, self.__class__):
+            return self.value == other.value
+        elif isinstance(other, type(self.value)):
+            return self.value == other
+        else:
+            return False
+    
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+
+    def __repr__(self):
+        return f"Property('{self.name}', '{self.datatype_str}', {self.value})"
+
+class Metric(): 
+    def __init__(self, name: str, datatype_str: str, value=None, properties: dict = dict()):
         self.name = name
         self.datatype_str = datatype_str
         self.datatype_sp = sparkplug_type_from_str(datatype_str)
@@ -69,6 +144,8 @@ class Metric():
             self.value = value
         else:
             self.value = self.default_from_sparkplug_type(self.datatype_sp)
+        self.properties = [Property(name, prop.get('datatype', None), prop.get('value', None)) for name, prop in properties.items()]
+        print(f'Created {self}')
     
     def __eq__(self, other):
         if isinstance(other, self.__class__):
@@ -81,6 +158,9 @@ class Metric():
     def __ne__(self, other: object) -> bool:
         return not self.__eq__(other)
     
+    def __repr__(self):
+        return f"Metric(name: '{self.name}', datatype_str='{self.datatype_str}', value={self.value}, properties={self.properties})"
+
     @staticmethod
     def default_from_sparkplug_type(data_type: sparkplug.MetricDataType):
         """
@@ -96,8 +176,10 @@ class Metric():
             return False
         elif data_type == sparkplug.MetricDataType.String:
             return ""
-        else:
+        elif data_type in NUMERIC_SPARKPLUG_METRIC_TYPES:
             return 0
+        else:
+            raise ValueError(f"Invalid datatype: {datatype}")
 
 class Device():
     def __init__(self, name: str, metrics: dict[str, Metric]):
@@ -162,18 +244,6 @@ class BirthCertificate:
             node_metrics = birth_certificate['node']['metrics']
             devices = birth_certificate['node']['devices']
             return BirthCertificate(node_metrics, devices)
-    
-    @staticmethod
-    def default_from_datatype_string(datatype):
-        print(datatype)
-        if datatype == sparkplug.MetricDataType.Boolean:
-            return False
-        elif datatype == sparkplug.MetricDataType.String:
-            return ''
-        elif datatype in NUMERIC_SPARKPLUG_TYPES:
-            return 0
-        else:
-            raise ValueError(f"Invalid datatype: {datatype}")
 
 class State():
 
@@ -186,11 +256,11 @@ class State():
         """
         # self.node_metrics = {metric_name: self.get_default_value(data_type) 
         #     for metric_name, metric in birth_certificate.node_metrics.items()}
-        self.node_metrics = {metric_name: Metric(metric_name, metric['datatype'], metric['value']) for metric_name, metric in birth_certificate.node_metrics.items()}
+        self.node_metrics = {metric_name: Metric(metric_name, metric['datatype'], metric.get('value', None), metric.get('properties', {})) for metric_name, metric in birth_certificate.node_metrics.items()}
         
         self.devices = {}
         for device_name, device in birth_certificate.devices.items():
-            device_metrics = {metric_name: Metric(metric_name, metric['datatype'], metric['value']) for metric_name, metric in device['metrics'].items()}
+            device_metrics = {metric_name: Metric(metric_name, metric['datatype'], metric['value'], metric.get('properties', {})) for metric_name, metric in device['metrics'].items()}
             self.devices[device_name] = Device(device_name, device_metrics)
 
         self._old_node_metrics = copy.deepcopy(self.node_metrics)
@@ -264,8 +334,6 @@ class Client(mqtt.Client):
     @staticmethod
     def sp_on_connect(client, userdata, flags, rc):
         print('Connected!')
-        print(f'self2: {client}')
-        print(f'userdata: {userdata}')
         print(f'flags: {flags}')
         print(f'rc: {rc}')
         client.subscribe("spBv1.0/" + client.group_id + "/" + client.node_id + "/DCMD/#")
@@ -381,14 +449,28 @@ class Client(mqtt.Client):
         self.set_seq(payload.seq)
         
 
-        # Add node control metrics
+        # Add node control metrics to payload
         sparkplug.addMetric(payload, "Node Control/Next Server", None, sparkplug.MetricDataType.Boolean, False)
         sparkplug.addMetric(payload, "Node Control/Rebirth", None, sparkplug.MetricDataType.Boolean, False)
         sparkplug.addMetric(payload, "Node Control/Reboot", None, sparkplug.MetricDataType.Boolean, False)
 
-        # Add metrics from state
+        # Add metrics from state to payload
         for metric_name, metric in self.state.node_metrics.items():
-            sparkplug.addMetric(payload, metric_name, None, metric.datatype_sp, metric.value)
+            sp_metric = sparkplug.addMetric(payload, metric_name, None, metric.datatype_sp, metric.value)
+            
+            # Add properties to metric
+            if metric.properties:
+                sp_metric.properties.keys.extend([prop.name for prop in metric.properties])
+                for prop in metric.properties:
+                    sp_prop = sp_metric.properties.values.add()
+                    sp_prop.type = prop.datatype_sp
+                    # This is dumb
+                    if sp_prop.type == sparkplug.ParameterDataType.Boolean:
+                        sp_prop.bool_value = prop.value
+                    elif sp_prop.type == sparkplug.ParameterDataType.String:
+                        sp_prop.string_value = prop.value
+                    else:
+                        sp_prop.int_value = prop.value
 
         # Publish the node birth certificate
         byteArray = bytearray(payload.SerializeToString())
@@ -404,7 +486,21 @@ class Client(mqtt.Client):
 
         # Add metrics from state for the given device
         for metric_name, metric in self.state.devices[device_name].metrics.items():
-            sparkplug.addMetric(payload, metric_name, None, metric.datatype_sp, metric.value)
+            sp_metric = sparkplug.addMetric(payload, metric_name, None, metric.datatype_sp, metric.value)
+
+            # Add properties to metric
+            if metric.properties:
+                sp_metric.properties.keys.extend([prop.name for prop in metric.properties])
+                for prop in metric.properties:
+                    sp_prop = sp_metric.properties.values.add()
+                    sp_prop.type = prop.datatype_sp
+                    # This is dumb
+                    if sp_prop.type == sparkplug.ParameterDataType.Boolean:
+                        sp_prop.bool_value = prop.value
+                    elif sp_prop.type == sparkplug.ParameterDataType.String:
+                        sp_prop.string_value = prop.value
+                    else:
+                        sp_prop.int_value = prop.value
 
         # Publish the device birth certificate
         byteArray = bytearray(payload.SerializeToString())

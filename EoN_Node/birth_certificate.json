@@ -4,11 +4,24 @@
         "metrics": {
             "solar_power": {
                 "datatype": "float",
-                "value": 0
+                "value": 0,
+                "properties": {
+                    "EngUnit": {
+                        "value": "kW",
+                        "datatype": "string"
+                    }
+                }
             },
             "load_power": {
                 "datatype": "float",
-                "value": 0
+                "value": 0,
+                "properties": {
+                    "EngUnit": {
+                        "value": "kW",
+                        "datatype": "string"
+                    }
+                }
+                
             },
             "inverter_status": {
                 "datatype": "bool",
@@ -33,11 +46,23 @@
                 "metrics": {
                     "voltage": {
                         "datatype": "float",
-                        "value": 0
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "V",
+                                "datatype": "string"
+                            }
+                        }
                     },
                     "current": {
                         "datatype": "float",
-                        "value": 0
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "A",
+                                "datatype": "string"
+                            }
+                        }
                     }
                 }
             },
@@ -45,19 +70,43 @@
                 "metrics": {
                     "voltage": {
                         "datatype": "float",
-                        "value": 0
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "V",
+                                "datatype": "string"
+                            }
+                        }
                     },
                     "current": {
                         "datatype": "float",
-                        "value": 0
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "A",
+                                "datatype": "string"
+                            }
+                        }
                     },
                     "temperature": {
                         "datatype": "float",
-                        "value": 0
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "°C",
+                                "datatype": "string"
+                            }
+                        }
                     },
                     "state_of_charge": {
                         "datatype": "uint16",
-                        "value": 32767
+                        "value": 32767,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "%",
+                                "datatype": "string"
+                            }
+                        }
                     }
                 }
             }

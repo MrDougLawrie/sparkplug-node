@@ -195,6 +195,8 @@ class MetricChangeEvent:
         self.metric_name = metric_name
         self.new_value = metric.value
         self.datatype_sp = metric.datatype_sp
+        if self.new_value is None:
+            print(f'WARNING: new_value=None when creating MetricChangeEvent for {self.metric_name}')
     
     def __repr__(self):
         return f"MetricChangeEvent 'metric_name': {self.metric_name} 'new_value': {self.new_value}, 'datatype_sp': {self.datatype_sp}"
@@ -391,13 +393,13 @@ class Client(mqtt.Client):
                 self._publish_birth()
             elif metric.name in self.birth_certificate.node_metrics:
                 # Get value
-                new_value = self.metric_value_from_type(metric, self.birth_certificate.node_metrics[metric.name])
-                        
+                new_value = self.metric_value_from_type(metric, self.state.node_metrics[metric.name].datatype_sp)
+                
                 # Update state
                 self.state.set_node_metric(metric.name, new_value)
 
                 # Appnd to metric change event buffer so that user can get new events from .inbound_events()
-                self.event_buffer.append(MetricChangeEvent(metric.name, metric.value))
+                self.event_buffer.append(MetricChangeEvent(metric.name, self.state.node_metrics[metric.name]))
             else:
                 # Invalid metric
                 print(f"Received NCMD with invalid metric {metric.name}. Ignoring.")
@@ -421,7 +423,7 @@ class Client(mqtt.Client):
             self.state.set_node_metric(metric.name, new_value)
             
             # Appnd to metric change event buffer so that user can get new events from .inbound_events()
-            metric_changes.append(MetricChangeEvent(device_name, metric.name, new_value))
+            metric_changes.append(MetricChangeEvent(device_name, metric.name, self.state.devices[device_name].metrics[metric.name]))
         if metric_changes:
             self.event_buffer.append(DeviceChangeEvent(device_name, metric_changes))
 
@@ -466,7 +468,7 @@ class Client(mqtt.Client):
                     sp_prop.type = prop.datatype_sp
                     # This is dumb
                     if sp_prop.type == sparkplug.ParameterDataType.Boolean:
-                        sp_prop.bool_value = prop.value
+                        sp_prop.boolean_value = prop.value
                     elif sp_prop.type == sparkplug.ParameterDataType.String:
                         sp_prop.string_value = prop.value
                     else:
@@ -564,7 +566,7 @@ class Client(mqtt.Client):
     @staticmethod
     def metric_value_from_type(metric, data_type: sparkplug.MetricDataType):
         if data_type == sparkplug.MetricDataType.Boolean:
-            return metric.bool_value
+            return metric.boolean_value
         elif data_type == sparkplug.MetricDataType.Int8:
             return metric.int_value
         elif data_type == sparkplug.MetricDataType.UInt8:
@@ -580,11 +582,13 @@ class Client(mqtt.Client):
         elif data_type == sparkplug.MetricDataType.Int64:
             return metric.int_value
         elif data_type == sparkplug.MetricDataType.UInt64:
-            return metric.uint_value
-        elif data_type == sparkplug.MetricDataType.Float32:
+            return metric.long_value
+        elif data_type == sparkplug.MetricDataType.Float:
             return metric.float_value
-        elif data_type == sparkplug.MetricDataType.Double64:
-            return metric.double_value
+        elif data_type == sparkplug.MetricDataType.Double:
+            return metric.float_val
+        # elif data_type == sparkplug.MetricDataType.Double64:
+        #     return metric.double_value
         elif data_type == sparkplug.MetricDataType.String:
             return metric.string_value
         else:

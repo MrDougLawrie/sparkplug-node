@@ -1,0 +1,330 @@
+{
+    "node": {
+        "name": "SolarBess",
+        "metrics": {
+            "ambient_temperature": {
+                "datatype": "float",
+                "value": 20.0,
+                "properties": {
+                    "EngUnit": {
+                        "value":"°C",
+                        "datatype": "string"
+                    },
+                    "ReadOnly": {
+                        "value": true,
+                        "datatype": "bool"
+                    }
+                }
+            },
+
+            "irradiance": {
+                "datatype": "float",
+                "value": 1000,
+                "properties": {
+                    "EngUnit": {
+                        "value":"W/m2",
+                        "datatype": "string"
+                    },
+                    "ReadOnly": {
+                        "value": true,
+                        "datatype": "bool"
+                    }
+                }
+            },
+            
+            "manual_mode": {
+                "datatype": "bool",
+                "value": true,
+                "properties": {
+                }
+            },
+
+            "poc_sp_mode": {
+                "datatype": "bool",
+                "value": false,
+                "properties": {
+                }    
+            },
+
+            "poc_local_mode": {
+                "datatype": "bool",
+                "value": false,
+                "properties": {
+                    "ReadOnly": {
+                        "value": true,
+                        "datatype": "bool"
+                    } 
+                }
+                
+            },
+
+            "mode_string": {
+                "datatype": "string",
+                "value": "Manual",
+                "properties": {
+                    "ReadOnly": {
+                        "value": true,
+                        "datatype": "bool"
+                    } 
+                }
+            },
+
+            "ip_address": {
+                "datatype": "string",
+                "value": "0.0.0.0",
+                "properties": {
+                    "ReadOnly": {
+                        "value": true,
+                        "datatype": "bool"
+                    } 
+                }
+            },
+
+            "uptime": {
+                "datatype": "uint64",
+                "value": 0,
+                "properties": {
+                    "EngUnit": {
+                        "datatype": "string",
+                        "value": "ms"
+                    },
+                    "ReadOnly": {
+                        "value": true,
+                        "datatype": "bool"
+                    }
+                }
+            }
+        },
+
+        "devices": {
+            "pv": {
+                "metrics": {
+                    "dc/voltage": {
+                        "datatype": "float",
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "V",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "dc/current": {
+                        "datatype": "float",
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "A",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "dc/power": {
+                        "datatype": "float",
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "W",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "ac/voltage": {
+                        "datatype": "float",
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "V",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "ac/current": {
+                        "datatype": "float",
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "A",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "ac/frequency": {
+                        "datatype": "float",
+                        "value": 50,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "Hz",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "ac/active_power": {
+                        "datatype": "float",
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "W",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "ac/reactive_power": {
+                        "datatype": "float",
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "VAr",
+                                "datatype": "string"
+                            }
+                        }
+                    }
+                    
+                }
+            },
+            "bess": {
+                "metrics": {
+                    "power_setpoint": {
+                        "datatype": "float",
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "W",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "battery/soc": {
+                        "datatype": "float",
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "%",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "battery/soh": {
+                        "datatype": "float",
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "%",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "battery/capacity": {
+                        "datatype": "float",
+                        "value": 100,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "kWh",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "dc/voltage": {
+                        "datatype": "float",
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "V",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "dc/current": {
+                        "datatype": "float",
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "A",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "dc/power": {
+                        "datatype": "float",
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "W",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "ac/voltage": {
+                        "datatype": "float",
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "V",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "ac/current": {
+                        "datatype": "float",
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "A",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "ac/frequency": {
+                        "datatype": "float",
+                        "value": 50,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "Hz",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "ac/active_power": {
+                        "datatype": "float",
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "V",
+                                "datatype": "string"
+                            }
+                        }
+                    },
+
+                    "ac/reactive_power": {
+                        "datatype": "float",
+                        "value": 0,
+                        "properties": {
+                            "EngUnit": {
+                                "value": "A",
+                                "datatype": "string"
+                            }
+                        }
+                    }
+                    
+                }
+            }
+        }
+    }
+}
